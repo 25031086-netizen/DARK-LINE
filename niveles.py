@@ -7,11 +7,11 @@ MAX_LEVEL = 8
 
 # dmg: daño | range: alcance (celdas) | cd: segundos entre ataques | arc: tolerancia angular (rad)
 WEAPONS = {
-    "espada":  {"dmg": 25, "range": 1.7, "cd": 0.5, "arc": 0.7},
-    "lanza":   {"dmg": 20, "range": 2.8, "cd": 0.7, "arc": 0.35},
-    "arco":    {"dmg": 18, "range": 9.0, "cd": 1.0, "arc": 0.2},
+    "espada":  {"dmg": 29, "range": 1.7, "cd": 0.5, "arc": 0.7},
+    "lanza":   {"dmg": 28, "range": 2.8, "cd": 0.7, "arc": 0.35},
+    "arco":    {"dmg": 25, "range": 9.0, "cd": 1.0, "arc": 0.2},
     "guadana": {"dmg": 50, "range": 2.0, "cd": 1.2, "arc": 0.9},
-    "escudo":  {"dmg": 10, "range": 1.3, "cd": 0.4, "arc": 0.8},  # además reduce 60% el daño recibido
+    "escudo":  {"dmg": 15, "range": 1.3, "cd": 0.4, "arc": 0.8},  # además reduce 60% el daño recibido
 }
 
 
