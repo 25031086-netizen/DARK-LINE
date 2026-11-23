@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Dark Line</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#000;color:#ddd;font-family:Georgia,serif;overflow:hidden;user-select:none}
+#menu{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:#050505 url(/static/assets/fondo_menu.png) center/cover no-repeat}
+#menu h1{font-size:64px;letter-spacing:10px;margin:0;color:#c21;text-shadow:0 0 25px #600}
+#menu input{padding:10px 14px;font-size:18px;background:#111c;color:#fff;border:1px solid #733;text-align:center}
+#chars{display:flex;gap:20px}
+#chars img{height:150px;min-width:90px;padding:6px;border:3px solid transparent;background:#0008;cursor:pointer;object-fit:contain}
+#chars img.sel{border-color:#c21;box-shadow:0 0 20px #c21}
+button{padding:12px 28px;font-size:20px;background:#511;color:#fff;border:1px solid #c33;cursor:pointer;font-family:inherit}
+button:hover{background:#822}
+#game{position:fixed;inset:0}
+#mini{position:fixed;top:10px;left:10px;width:180px;height:180px;border:2px solid #633;background:#000a;z-index:5}
+#bars{position:fixed;bottom:14px;left:14px;z-index:5;width:240px}
+.bar{height:14px;background:#000a;border:1px solid #666;margin-top:6px}
+.bar i{display:block;height:100%;width:100%}
+#hp i{background:#b11}#st i{background:#cb2}
+#info{font-size:15px;text-shadow:0 0 4px #000}
+#rank{position:fixed;top:10px;right:10px;z-index:5;background:#000a;border:1px solid #633;padding:8px 12px;font-size:13px;min-width:170px}
+#boss{position:fixed;top:12px;left:50%;transform:translateX(-50%);width:260px;z-index:5;display:none;text-align:center;font-size:13px}
+#boss .bar i{background:#e22}
+#flash{position:fixed;inset:0;background:#f00;opacity:0;pointer-events:none;z-index:6}
+#wpn{position:fixed;right:2%;bottom:0;height:42%;z-index:5;pointer-events:none;display:none;transform-origin:bottom right}
+#wpn.swing{animation:sw .3s}
+@keyframes sw{40%{transform:translate(-80px,-40px) rotate(-18deg) scale(1.1)}}
+#toast{position:fixed;bottom:25%;left:50%;transform:translateX(-50%);z-index:7;font-size:22px;color:#fc6;text-shadow:0 0 8px #000;opacity:0;transition:opacity .5s;pointer-events:none}
+.over{position:fixed;inset:0;z-index:15;background:#000d;display:none;flex-direction:column;align-items:center;justify-content:center;gap:20px}
+.over h1{font-size:70px;color:#c11;margin:0;letter-spacing:6px}
+/* ---- panel de ranking ---- */
+#rankpanel{position:fixed;inset:0;z-index:30;background:#000e;display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+#rankpanel table{border-collapse:collapse;min-width:440px;font-size:18px}
+#rankpanel th,#rankpanel td{padding:6px 14px;border-bottom:1px solid #422;text-align:left}
+#rankpanel th{color:#c21}
+.tab.sel{background:#822}
+</style>
+</head>
+<body>
+<div id="menu">
+  <h1>DARK LINE</h1>
+  <input id="name" maxlength="14" placeholder="Tu nombre" value="">
+  <div id="chars">
+    <img src="/static/assets/puno.png" data-c="puno" class="sel" alt="puno">
+    <img src="/static/assets/pdos.png" data-c="pdos" alt="pdos">
+    <img src="/static/assets/pres.png" data-c="pres" alt="pres">
+  </div>
+  <button id="play">ENTRAR AL LABERINTO</button>
+  <button id="btnrank">VER RANKING</button>
+  <div style="font-size:14px;color:#aaa">W avanzar · A/D girar · S retroceder · Shift correr · Espacio / clic atacar</div>
+</div>
+<div id="game"></div>
+<div id="rankpanel">
+  <h1 style="color:#c21;letter-spacing:6px;margin:0">RANKING</h1>
+  <div><button class="tab sel" data-v="global">Global</button> <button class="tab" data-v="hoy">Últimas 24 h</button></div>
+  <table id="ranktable"></table>
+  <button id="rankclose">VOLVER</button>
+</div>
+<canvas id="mini" width="180" height="180"></canvas>
+<div id="bars"><div id="info"></div><div class="bar" id="hp"><i></i></div><div class="bar" id="st"><i></i></div></div>
+<div id="rank"></div>
+<div id="boss"><div>JEFE</div><div class="bar"><i id="bossbar"></i></div></div>
+<div id="flash"></div>
+<img id="wpn" alt="arma">
+<div id="toast"></div>
+<div class="over" id="death"><h1>HAS MUERTO</h1><button id="retry">REINTENTAR NIVEL</button></div>
+<div class="over" id="win"><h1 style="color:#fc6">HAS ESCAPADO</h1><div id="winscore" style="font-size:24px"></div><button id="again">JUGAR DE NUEVO</button></div>
+
+<!-- Panel de ranking (lee /api/top/global y /api/top/hoy) -->
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  const fmt = s => Math.floor(s / 60) + ":" + (s % 60).toFixed(1).padStart(4, "0");
+  async function cargar(v) {
+    const t = $("ranktable");
+    t.innerHTML = "<tr><td>Cargando…</td></tr>";
+    try {
+      const filas = await (await fetch("/api/top/" + v)).json();
+      if (!filas.length) { t.innerHTML = "<tr><td>Aún no hay tiempos registrados.</td></tr>"; return; }
+      const g = v === "global";
+      t.innerHTML = "<tr><th>#</th><th>Jugador</th><th>Tiempo</th>" + (g ? "<th>Personaje</th><th>Jefes</th>" : "") + "</tr>" +
+        filas.map(r => `<tr><td>${r.puesto}</td><td>${esc(r.nombre)}</td><td>${fmt(r.tiempo_seg)}</td>` +
+          (g ? `<td>${esc(r.personaje ?? "")}</td><td>${r.jefes_derrotados ?? ""}</td>` : "") + "</tr>").join("");
+    } catch (e) { t.innerHTML = "<tr><td>No se pudo cargar el ranking.</td></tr>"; }
+  }
+  $("btnrank").onclick = () => { $("rankpanel").style.display = "flex"; cargar("global"); };
+  $("rankclose").onclick = () => $("rankpanel").style.display = "none";
+  document.querySelectorAll("#rankpanel .tab").forEach(b => b.onclick = () => {
+    document.querySelectorAll("#rankpanel .tab").forEach(x => x.classList.remove("sel"));
+    b.classList.add("sel"); cargar(b.dataset.v);
+  });
+})();
+</script>
+
+<!-- Avisos de error y botón de jugar (funcionan aunque falle lo demás) -->
+<script>
+window.onerror = (msg, src, line) => alert("Error en la página: " + msg + " (línea " + line + ")");
+document.getElementById("play").onclick = () => {
+  if (typeof connect !== "function") {
+    alert("El juego no se pudo cargar (probablemente la librería 3D está bloqueada). Revisa tu internet y recarga con Ctrl+F5.");
+  } else connect();
+};
+</script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+if (!window.THREE) document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"><\/script>');
+</script>
+<script>
+const A = "/static/assets/", TL = new THREE.TextureLoader(), TC = {};
+const $ = id => document.getElementById(id);
+const fmt = s => Math.floor(s / 60) + ":" + (s % 60).toFixed(1).padStart(4, "0");
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let WST = {}, MAXL = 8, ws, myId, grid, size, world, L, lvl = 1, online = 1, mini, advancing = false, playing = false, char = "puno";
+let trapSet = new Set(), trapMat = null, wpns = [], exitM = null, boss = {alive:false, x:0, y:0, hp:0, max:1};
+const others = new Map(), keys = {};
+const me = {x:1.5, y:1.5, rot:0, hp:100, stam:100, exh:0, weapon:null, cd:0, dead:false, moving:false};
+
+/* ---------- escena ---------- */
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+scene.fog = new THREE.FogExp2(0x000000, 0.34);
+const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 60);
+scene.add(camera);
+const renderer = new THREE.WebGLRenderer({antialias: true});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+$("game").appendChild(renderer.domElement);
+scene.add(new THREE.AmbientLight(0x303040, 0.18));
+const spot = new THREE.SpotLight(0xfff2cc, 2.6, 10, 0.55, 0.6, 1.5);
+camera.add(spot); camera.add(spot.target); spot.target.position.set(0, 0, -1);
+const glow = new THREE.PointLight(0xffe0aa, 0.7, 3.5);
+camera.add(glow);
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+function tex(name, col) {
+  if (TC[name]) return TC[name];
+  const t = TL.load(A + name, undefined, undefined, () => {
+    const c = document.createElement("canvas"); c.width = c.height = 8;
+    const x = c.getContext("2d"); x.fillStyle = col; x.fillRect(0, 0, 8, 8);
+    t.image = c; t.needsUpdate = true;
+  });
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return TC[name] = t;
+}
+function sprite(name, h, col) {
+  const m = new THREE.SpriteMaterial({transparent: true, alphaTest: 0.05});
+  const s = new THREE.Sprite(m);
+  s.scale.set(h, h, 1);
+  TL.load(A + name, t => {
+    m.map = t; m.needsUpdate = true;
+    s.scale.set(h * t.image.width / t.image.height, h, 1);
+  }, undefined, () => { m.color.set(col); m.needsUpdate = true; });
+  return s;
+}
+function label(text) {
+  const c = document.createElement("canvas"); c.width = 256; c.height = 64;
+  const x = c.getContext("2d");
+  x.font = "bold 34px sans-serif"; x.textAlign = "center"; x.lineWidth = 6;
+  x.strokeStyle = "#000"; x.fillStyle = "#8cf";
+  x.strokeText(text, 128, 44); x.fillText(text, 128, 44);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.CanvasTexture(c), transparent: true}));
+  s.scale.set(1.2, 0.3, 1);
+  return s;
+}
+const bossS = sprite("jefe.png", 1.3, "#778");
+bossS.visible = false; scene.add(bossS);
+
+/* ---------- carga de nivel ---------- */
+function loadLevel(d) {
+  if (world) scene.remove(world);
+  world = new THREE.Group(); scene.add(world);
+  L = d; grid = d.grid; size = grid.length; lvl = d.level;
+  scene.fog.density = 0.30 + 0.025 * lvl;
+  const cells = [];
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (grid[y][x] === 1) cells.push([x, y]);
+  const im = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1.4, 1),
+    new THREE.MeshStandardMaterial({map: tex("pared.png", "#555")}), cells.length);
+  const m4 = new THREE.Matrix4();
+  cells.forEach(([x, y], i) => { m4.setPosition(x + .5, .7, y + .5); im.setMatrixAt(i, m4); });
+  world.add(im);
+  const ft = tex("suelo.png", "#333"); ft.repeat.set(size / 2, size / 2);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshStandardMaterial({map: ft}));
+  floor.rotation.x = -Math.PI / 2; floor.position.set(size / 2, 0, size / 2); world.add(floor);
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshStandardMaterial({color: 0x141414}));
+  ceil.rotation.x = Math.PI / 2; ceil.position.set(size / 2, 1.4, size / 2); world.add(ceil);
+  trapSet = new Set(); trapMat = new THREE.MeshBasicMaterial({color: 0x44ff33, transparent: true, opacity: .55});
+  d.traps.forEach(([x, y]) => {
+    trapSet.add(x + "," + y);
+    const t = new THREE.Mesh(new THREE.PlaneGeometry(.9, .9), trapMat);
+    t.rotation.x = -Math.PI / 2; t.position.set(x + .5, .02, y + .5); world.add(t);
+  });
+  exitM = new THREE.Mesh(new THREE.BoxGeometry(.5, 1.3, .5), new THREE.MeshBasicMaterial({color: 0xffd24a}));
+  exitM.position.set(d.exit[0] + .5, .65, d.exit[1] + .5); world.add(exitM);
+  wpns = d.weapons.map(w => {
+    const s = sprite(w.k + ".png", .45, "#fc4");
+    s.position.set(w.x + .5, .35, w.y + .5); world.add(s);
+    return {k: w.k, x: w.x + .5, y: w.y + .5, s};
+  });
+  // minimapa pre-renderizado
+  mini = document.createElement("canvas"); mini.width = mini.height = 180;
+  const c = mini.getContext("2d"), px = 180 / size;
+  c.fillStyle = "#050505"; c.fillRect(0, 0, 180, 180);
+  c.fillStyle = "#6a6a6a";
+  cells.forEach(([x, y]) => c.fillRect(x * px, y * px, px + .5, px + .5));
+  me.x = d.start[0] + .5; me.y = d.start[1] + .5; me.rot = 0; me.weapon = null; me.cd = 0;
+  $("wpn").style.display = "none"; advancing = false;
+  others.forEach(o => { scene.remove(o.s); scene.remove(o.l); }); others.clear();
+  bossS.visible = false;
+}
+
+/* ---------- HUD / utilidades ---------- */
+function toast(t) {
+  const e = $("toast"); e.textContent = t; e.style.opacity = 1;
+  clearTimeout(toast.h); toast.h = setTimeout(() => e.style.opacity = 0, 2200);
+}
+function flash(a) {
+  const f = $("flash"); f.style.transition = "none"; f.style.opacity = a;
+  setTimeout(() => { f.style.transition = "opacity .7s"; f.style.opacity = 0; }, 30);
+}
+function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+function hurt(d) {
+  if (me.dead) return;
+  me.hp -= d; flash(.55);
+  if (me.hp <= 0) {
+    me.hp = 0; me.dead = true; send({t: "dead"}); $("death").style.display = "flex";
+  }
+}
+function attack() {
+  if (!playing || me.dead) return;
+  if (!me.weapon) { toast("Sin arma: busca una en el laberinto"); return; }
+  const now = performance.now();
+  if (now < me.cd) return;
+  me.cd = now + WST[me.weapon].cd * 1000;
+  send({t: "attack", w: me.weapon});
+  const w = $("wpn"); w.classList.remove("swing"); void w.offsetWidth; w.classList.add("swing");
+}
+function drawMini() {
+  const c = $("mini").getContext("2d"), px = 180 / size;
+  c.clearRect(0, 0, 180, 180); c.drawImage(mini, 0, 0);
+  const dot = (x, y, col, r) => { c.fillStyle = col; c.beginPath(); c.arc(x * px, y * px, r, 0, 7); c.fill(); };
+  c.fillStyle = "#fc3"; c.fillRect(L.exit[0] * px, L.exit[1] * px, px, px);
+  if (!me.weapon) wpns.forEach(w => dot(w.x, w.y, "#ffee55", 2.5));
+  others.forEach(o => { if (!o.dead) dot(o.tx, o.ty, "#3b8bff", 3); });
+  if (boss.alive) dot(boss.x, boss.y, "#ff2222", 4);
+  dot(me.x, me.y, "#22ff44", 3.5);
+}
+
+/* ---------- red ---------- */
+function connect() {
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  ws.onopen = () => send({t: "join", name: $("name").value.trim(), char});
+  ws.onerror = () => alert("No se pudo conectar con el servidor (WebSocket). Abre el juego desde http://localhost:8000 y revisa que el servidor siga corriendo.");
+  ws.onclose = () => { if (playing) toast("Conexión perdida. Recarga la página."); };
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "init") {
+      myId = m.id; WST = m.weapons; MAXL = m.max_level;
+      loadLevel(m.level.data); playing = true;
+      $("menu").style.display = "none";
+    } else if (m.t === "level") {
+      loadLevel(m.data); me.dead = false;
+      if (m.reason === "advance") me.hp = Math.min(100, me.hp + 40); else { me.hp = 100; me.stam = 100; me.exh = 0; }
+      $("death").style.display = "none";
+      if (m.reason === "advance") toast("Nivel " + m.level);
+      if (m.reason === "restart") { $("win").style.display = "none"; }
+    } else if (m.t === "tick") {
+      boss = m.boss;
+      if (m.rank) {
+        online = m.online;
+        $("rank").innerHTML = "<b>TOP 10 · MENOR TIEMPO</b>" + m.rank.map((r, i) => `<div>${i + 1}. ${esc(r.name)} — ${fmt(r.tiempo)}</div>`).join("");
+      }
+      const seen = new Set();
+      m.players.forEach(p => {
+        if (p.id === myId) return;
+        seen.add(p.id);
+        let o = others.get(p.id);
+        if (!o) {
+          o = {s: sprite(p.char + ".png", 1.0, "#38f"), l: label(p.name), tx: p.x, ty: p.y};
+          o.s.position.set(p.x, .5, p.y); scene.add(o.s); scene.add(o.l); others.set(p.id, o);
+        }
+        o.tx = p.x; o.ty = p.y; o.dead = p.dead; o.s.visible = o.l.visible = !p.dead;
+      });
+      others.forEach((o, id) => { if (!seen.has(id)) { scene.remove(o.s); scene.remove(o.l); others.delete(id); } });
+    } else if (m.t === "hit") hurt(m.dmg);
+    else if (m.t === "msg") toast(m.text);
+    else if (m.t === "win") { $("winscore").textContent = "Tu tiempo: " + fmt(m.tiempo); $("win").style.display = "flex"; }
+  };
+}
+
+/* ---------- entrada ---------- */
+document.querySelectorAll("#chars img").forEach(i => i.onclick = () => {
+  document.querySelectorAll("#chars img").forEach(x => x.classList.remove("sel"));
+  i.classList.add("sel"); char = i.dataset.c;
+});
+$("retry").onclick = () => send({t: "respawn"});
+$("again").onclick = () => send({t: "restart"});
+addEventListener("keydown", e => {
+  keys[e.code] = true;
+  if (e.code === "Space") { e.preventDefault(); attack(); }
+});
+addEventListener("keyup", e => keys[e.code] = false);
+renderer.domElement.addEventListener("mousedown", attack);
+setInterval(() => { if (playing) send({t: "state", x: me.x, y: me.y, rot: me.rot, w: me.weapon}); }, 50);
+
+/* ---------- bucle principal ---------- */
+const solid = (x, y) => { const r = grid[Math.floor(y)]; return !r || r[Math.floor(x)] !== 0; };
+const canAt = (x, y) => { const r = .22; return !(solid(x - r, y - r) || solid(x + r, y - r) || solid(x - r, y + r) || solid(x + r, y + r)); };
+let last = performance.now(), dipUntil = 0;
+
+function update(dt, t) {
+  if (keys.KeyA) me.rot += 2.3 * dt;
+  if (keys.KeyD) me.rot -= 2.3 * dt;
+  const fwd = (keys.KeyW ? 1 : 0) - (keys.KeyS ? .6 : 0);
+  const wantRun = (keys.ShiftLeft || keys.ShiftRight) && keys.KeyW && me.exh <= 0 && me.stam > 0;
+  if (wantRun) {
+    me.stam -= 28 * dt;
+    if (me.stam <= 0) { me.stam = 0; me.exh = 3; toast("¡Exhausto!"); }
+  } else if (me.exh > 0) {
+    me.exh -= dt; if (me.exh <= 0) { me.exh = 0; me.stam = 15; }
+  } else me.stam = Math.min(100, me.stam + 14 * dt);
+  const onTrap = trapSet.has(Math.floor(me.x) + "," + Math.floor(me.y));
+  let v = (wantRun ? 5 : 3) * (me.exh > 0 ? .35 : 1) * (onTrap ? .45 : 1);
+  if (onTrap) hurt(8 * dt);
+  const fx = -Math.sin(me.rot), fy = -Math.cos(me.rot);
+  const nx = me.x + fx * fwd * v * dt, ny = me.y + fy * fwd * v * dt;
+  if (canAt(nx, me.y)) me.x = nx;
+  if (canAt(me.x, ny)) me.y = ny;
+  me.moving = fwd !== 0;
+  if (!me.weapon) {
+    for (const w of wpns) if (Math.hypot(w.x - me.x, w.y - me.y) < .6) {
+      me.weapon = w.k;
+      wpns.forEach(o => world.remove(o.s)); wpns = [];  // las otras 4 desaparecen
+      const img = $("wpn"); img.src = A + w.k + ".png"; img.style.display = "block";
+      toast("Arma equipada: " + w.k.toUpperCase() + " (bloqueada este nivel)");
+      break;
+    }
+  }
+  if (!advancing && Math.hypot(L.exit[0] + .5 - me.x, L.exit[1] + .5 - me.y) < .7) {
+    advancing = true; send({t: "advance"});
+  }
+  // linterna con parpadeo leve
+  if (t > dipUntil && Math.random() < .012) dipUntil = t + 90;
+  const f = t < dipUntil ? .15 : .88 + Math.random() * .12;
+  spot.intensity = 2.6 * f; glow.intensity = .7 * f;
+}
+
+function frame(t) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(.05, (t - last) / 1000); last = t;
+  if (playing && L) {
+    if (!me.dead) update(dt, t);
+    const bob = me.moving && !me.dead ? Math.sin(t / 110) * .035 : 0;
+    camera.position.set(me.x, (me.dead ? .25 : .7) + bob, me.y);
+    camera.rotation.set(0, me.rot, 0);
+    // jefe, otros jugadores, objetos
+    bossS.visible = boss.alive;
+    if (boss.alive) {
+      bossS.position.x += (boss.x - bossS.position.x) * .3;
+      bossS.position.z += (boss.y - bossS.position.z) * .3;
+      bossS.position.y = .65;
+      const d = Math.hypot(boss.x - me.x, boss.y - me.y);
+      $("boss").style.display = d < 12 ? "block" : "none";
+      $("bossbar").style.width = (100 * boss.hp / boss.max) + "%";
+    } else $("boss").style.display = "none";
+    others.forEach(o => {
+      o.s.position.x += (o.tx - o.s.position.x) * .3;
+      o.s.position.z += (o.ty - o.s.position.z) * .3;
+      o.l.position.set(o.s.position.x, 1.15, o.s.position.z);
+    });
+    wpns.forEach(w => w.s.position.y = .35 + Math.sin(t / 300) * .05);
+    if (trapMat) trapMat.opacity = .45 + .2 * Math.sin(t / 250);
+    if (exitM) { exitM.material.color.setHSL(.12, 1, .5 + .15 * Math.sin(t / 200)); exitM.rotation.y += dt; }
+    $("hp").firstElementChild.style.width = me.hp + "%";
+    $("st").firstElementChild.style.width = me.stam + "%";
+    $("st").firstElementChild.style.background = me.exh > 0 ? "#733" : "#cb2";
+    $("info").textContent = `NIVEL ${lvl}/${MAXL} · HP ${Math.ceil(me.hp)} · En línea: ${online}` +
+      (me.weapon ? " · " + me.weapon.toUpperCase() : "");
+    drawMini();
+  }
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
