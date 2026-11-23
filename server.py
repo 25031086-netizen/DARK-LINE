@@ -59,7 +59,7 @@ class Boss:
     def damage(self, d):
         self.hp -= d
         if self.hp <= 0:
-            self.alive, self.timer = False, 20.0  # reaparece a los 20 s
+            self.alive, self.timer = False, 28.0  # reaparece a los 20 s
             return True
         return False
 
